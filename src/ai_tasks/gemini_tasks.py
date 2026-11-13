@@ -1,62 +1,80 @@
 
 import os
 import json
+import re
+
 from dotenv import load_dotenv
 from google import genai
 
-# Load the API key from the .env file
 load_dotenv()
-
-api_key = os.getenv("GEMINI_API_KEY")
-
-if not api_key:
-    raise ValueError("GEMINI_API_KEY not found in .env")
-
-client = genai.Client(api_key=api_key)
 
 MODEL_NAME = "gemini-3.5-flash-lite"
 
+CATEGORIES = [
+    "Network",
+    "Software",
+    "Hardware",
+    "Access Management",
+    "Security"
+]
+
+SENTIMENTS = ["Positive", "Neutral", "Negative"]
+
+URGENCY_LEVELS = ["Low", "Medium", "High", "Critical"]
+
+REQUIRED_FIELDS = [
+    "category",
+    "sentiment",
+    "urgency",
+    "urgency_reason",
+    "troubleshooting_response"
+]
+
 
 def analyze_ticket(ticket_text):
-    """
-    Performs three IT support NLP tasks:
-    1. Ticket classification
-    2. Sentiment and urgency analysis
-    3. Troubleshooting response generation
-    """
+
+    api_key = os.getenv("GEMINI_API_KEY")
+
+    if not api_key:
+        raise ValueError(
+            "GEMINI_API_KEY not found. Please configure it in your .env file."
+        )
+
+    client = genai.Client(api_key=api_key)
 
     prompt = f"""
-You are an IT Support AI Assistant.
+You are a professional IT Support AI Assistant.
 
-Analyze the following IT support ticket.
+Analyze this IT support ticket:
 
-Ticket:
 {ticket_text}
 
-Perform these three tasks:
+Return exactly one JSON object with these fields:
 
-1. CLASSIFICATION:
-Choose exactly one category:
-Network, Software, Hardware, Access Management, Security.
+1. category: choose exactly one:
+{CATEGORIES}
 
-2. SENTIMENT AND URGENCY:
-Identify the sentiment as Positive, Neutral, or Negative.
-Choose urgency as Low, Medium, High, or Critical.
-Give a short reason for the urgency.
+2. sentiment: choose exactly one:
+{SENTIMENTS}
 
-3. TROUBLESHOOTING:
-Generate a clear, polite and practical IT support response.
-Do not claim that an issue has been fixed.
-Do not ask for passwords or sensitive information.
+3. urgency: choose exactly one:
+{URGENCY_LEVELS}
 
-Return ONLY valid JSON in this exact structure:
+4. urgency_reason: briefly explain the urgency.
 
+5. troubleshooting_response: provide clear, practical troubleshooting
+steps. Do not claim the issue is fixed. Never ask for passwords,
+API keys, or other sensitive information.
+
+Return valid JSON only, without Markdown fences.
+
+Example structure:
 {{
-    "category": "Network",
-    "sentiment": "Negative",
-    "urgency": "High",
-    "urgency_reason": "The user cannot access a critical business service.",
-    "troubleshooting_response": "Please check your network connection..."
+  "category": "Network",
+  "sentiment": "Negative",
+  "urgency": "High",
+  "urgency_reason": "The user cannot access a required business service.",
+  "troubleshooting_response": "Check your network connection and VPN settings."
 }}
 """
 
@@ -65,25 +83,38 @@ Return ONLY valid JSON in this exact structure:
         contents=prompt
     )
 
-    result_text = response.text.strip()
+    result_text = response.text
 
-    # Remove Markdown code fences if the model includes them
-    if result_text.startswith("```"):
-        result_text = result_text.replace("```json", "", 1)
-        result_text = result_text.replace("```", "").strip()
+    if not result_text:
+        raise ValueError("Gemini returned an empty response.")
 
-    result = json.loads(result_text)
+    result_text = result_text.strip()
 
-    required_fields = [
-        "category",
-        "sentiment",
-        "urgency",
-        "urgency_reason",
-        "troubleshooting_response"
-    ]
+    result_text = re.sub(
+        r"^```(?:json)?\s*|\s*```$",
+        "",
+        result_text,
+        flags=re.IGNORECASE
+    ).strip()
 
-    for field in required_fields:
+    match = re.search(r"\{.*\}", result_text, re.DOTALL)
+
+    if not match:
+        raise ValueError("Gemini did not return valid JSON.")
+
+    result = json.loads(match.group())
+
+    for field in REQUIRED_FIELDS:
         if field not in result:
             raise ValueError(f"Missing field in Gemini response: {field}")
+
+    if result["category"] not in CATEGORIES:
+        raise ValueError(f"Invalid category: {result['category']}")
+
+    if result["sentiment"] not in SENTIMENTS:
+        raise ValueError(f"Invalid sentiment: {result['sentiment']}")
+
+    if result["urgency"] not in URGENCY_LEVELS:
+        raise ValueError(f"Invalid urgency: {result['urgency']}")
 
     return result

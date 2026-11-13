@@ -6,3 +6,7 @@ matplotlib
 seaborn
 pypdf
 python-dotenv
+google-genai
+transformers
+torch
+huggingface-hub
